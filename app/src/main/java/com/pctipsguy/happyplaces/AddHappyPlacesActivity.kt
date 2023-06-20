@@ -1,5 +1,6 @@
 package com.pctipsguy.happyplaces
 
+import android.app.Activity
 import android.app.AlertDialog
 import android.app.DatePickerDialog
 import android.app.DatePickerDialog.OnDateSetListener
@@ -30,6 +31,10 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.model.Place
+import com.google.android.libraries.places.widget.Autocomplete
+import com.google.android.libraries.places.widget.model.AutocompleteActivityMode
 import com.pctipsguy.happyplaces.databinding.ActivityAddHappyPlacesBinding
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -42,6 +47,9 @@ class AddHappyPlacesActivity : AppCompatActivity() {
 
 
     private var mLocation:Location?=null
+    private var mLatitude:Double = 0.0
+//    private var mLatitude:Double
+    private var mLongitude:Double = 0.0
     private var mAddress:String? = null
     private var fusedLocationProvider: FusedLocationProviderClient? = null
     private val locationRequest: LocationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY,10)
@@ -54,6 +62,8 @@ class AddHappyPlacesActivity : AppCompatActivity() {
             if (locationList.isNotEmpty()) {
                 val location = locationList.last()
                 mLocation = location
+                mLongitude = location.longitude
+                mLatitude = location.latitude
                 val addressTask =
                     GetAddressFromLatLng(this@AddHappyPlacesActivity,location.latitude, location.longitude)
                 addressTask.setAddressListener(object :
@@ -92,6 +102,20 @@ class AddHappyPlacesActivity : AppCompatActivity() {
                 binding?.ivPlaceImage?.setImageURI(imageURI!!)
         }
 
+    private val suggestionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()){
+            if(it.resultCode == Activity.RESULT_OK){
+                val place: Place = Autocomplete.getPlaceFromIntent(it.data!!)
+                binding?.etLocation!!.setText(place.address)
+                mLatitude = place.latLng!!.latitude
+                mLongitude = place.latLng!!.longitude
+                mAddress = place.address
+            }
+            else{
+                Log.e("suggest", "${it.resultCode}: ${it.data}" )
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val placesDao = HappyDatabase.getInstance(this)
         super.onCreate(savedInstanceState)
@@ -106,6 +130,12 @@ class AddHappyPlacesActivity : AppCompatActivity() {
         if (intent.hasExtra("PlaceDetails")) {
             mHappyPlaceDetails =
                 intent.getSerializableExtra("PlaceDetails") as HappyPlace
+        }
+        if (!Places.isInitialized()) {
+            Places.initialize(
+                this@AddHappyPlacesActivity,
+                resources.getString(R.string.google_maps_api_key)
+            )
         }
         supportActionBar?.title = "Add Happy Place"
 
@@ -152,12 +182,28 @@ class AddHappyPlacesActivity : AppCompatActivity() {
             getLocation()
             binding?.etLocation?.setText(mAddress)
         }
+        binding?.etLocation?.setOnClickListener{
+            try {
+                // These are the list of fields which we required is passed
+                val fields = listOf(
+                    Place.Field.ID, Place.Field.NAME, Place.Field.LAT_LNG,
+                    Place.Field.ADDRESS
+                )
+                // Start the autocomplete intent with a unique request code.
+                val intent =
+                    Autocomplete.IntentBuilder(AutocompleteActivityMode.FULLSCREEN, fields)
+                        .build(this@AddHappyPlacesActivity)
+                suggestionLauncher.launch(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         binding?.btnSave?.setOnClickListener {
             showProgressDialog()
             val happyPlace = HappyPlace(title = binding?.etTitle?.text.toString(),
                 date=binding?.etDate?.text.toString(),
-                location = mAddress!!, latitude = mLocation!!.latitude,
-                longitude = mLocation!!.longitude,
+                location = mAddress!!, latitude = mLatitude,
+                longitude = mLongitude,
                 description = binding?.etDescription?.text.toString()
                 , imgUri = checkImageExists(imageURI,placesDao))
             println(happyPlace)
@@ -172,7 +218,6 @@ class AddHappyPlacesActivity : AppCompatActivity() {
             finish()
         }
         fusedLocationProvider = LocationServices.getFusedLocationProviderClient(this)
-        getLocation()
     }
 
     private fun saveHappyPlaceImageLocally(fileURI:Uri):Uri{
